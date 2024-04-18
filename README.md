@@ -1,0 +1,3 @@
+# Trivy-pprof
+
+`go run . ...`
