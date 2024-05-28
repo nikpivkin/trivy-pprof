@@ -2,10 +2,14 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
 	"runtime/pprof"
+	"syscall"
 
 	"github.com/aquasecurity/trivy/pkg/commands"
+	"github.com/arl/statsviz"
 )
 
 func main() {
@@ -15,10 +19,14 @@ func main() {
 }
 
 func run() error {
-	cpuf, err := os.Create("cpu.prof")
-	if err != nil {
-		return err
-	}
+	mux := http.NewServeMux()
+	statsviz.Register(mux)
+
+	go func() {
+		log.Println(http.ListenAndServe("localhost:8080", mux))
+	}()
+
+	cpuf, _ := os.Create("cpu.prof")
 	defer cpuf.Close()
 
 	if err := pprof.StartCPUProfile(cpuf); err != nil {
@@ -26,18 +34,26 @@ func run() error {
 	}
 	defer pprof.StopCPUProfile()
 
+	defer func() {
+		heapf, _ := os.Create("heap.prof")
+		pprof.WriteHeapProfile(heapf)
+
+	}()
+
+	sig := make(chan os.Signal, 1)
+
+	go func() {
+		<-sig
+		pprof.StopCPUProfile()
+		heapf, _ := os.Create("heap.prof")
+		pprof.WriteHeapProfile(heapf)
+		os.Exit(0)
+	}()
+
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+
 	app := commands.NewApp()
 	if err := app.Execute(); err != nil {
-		return err
-	}
-
-	heapf, err := os.Create("heap.prof")
-	if err != nil {
-		return err
-	}
-	defer heapf.Close()
-
-	if err := pprof.WriteHeapProfile(heapf); err != nil {
 		return err
 	}
 	return nil
